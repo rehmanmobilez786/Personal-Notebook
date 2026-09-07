@@ -2,114 +2,68 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ '**' ]
-    tags:
-      - 'v*'
+    branches: [ "**" ]
   pull_request:
+    branches: [ "**" ]
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
   build-apk:
-    name: Build & Package APK
+    name: Build Debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
-          cache: 'gradle'
 
-      - name: Configure Android SDK & Licenses
-        run: |
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-          # Accept all Android SDK licenses automatically
-          if command -v sdkmanager &> /dev/null; then
-            yes | sdkmanager --licenses || true
-          elif [ -n "$ANDROID_HOME" ] && [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          fi
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Prepare Signing & Environment
+      - name: Prepare Debug Keystore
         run: |
-          # Reconstruct debug.keystore from base64 if present
           if [ -f "debug.keystore.base64" ]; then
-            echo "Rebuilding debug.keystore from base64..."
-            base64 -d debug.keystore.base64 > debug.keystore || true
+            base64 -d debug.keystore.base64 > debug.keystore
+            echo "debug.keystore restored successfully."
+          elif [ ! -f "debug.keystore" ]; then
+            echo "Generating fallback debug keystore..."
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # If debug.keystore is still missing, generate a valid debug keystore
-          if [ ! -f "debug.keystore" ] || [ ! -s "debug.keystore" ]; then
-            echo "Generating fresh debug.keystore..."
-            keytool -genkey -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-          # Ensure .env file exists for secrets-gradle-plugin
+      - name: Prepare Environment Secrets (.env)
+        run: |
           if [ ! -f ".env" ]; then
             if [ -f ".env.example" ]; then
               cp .env.example .env
+              echo ".env created from .env.example."
             else
               touch .env
             fi
           fi
 
-      - name: Set Gradle Wrapper Permissions
-        run: |
-          chmod +x gradlew
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x gradlew || true
 
-      - name: Build Debug APK with Gradle Wrapper
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Build Debug APK
         run: |
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Locate & Collect Built APK
-        id: collect_apk
-        run: |
-          mkdir -p output-apk
-          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No APK found in app/build/outputs/apk/debug!"
-            exit 1
-          fi
-          echo "Found APK at: $APK_PATH"
-          cp "$APK_PATH" output-apk/Personal-Notebook.apk
-          ls -lh output-apk/
-
-      - name: Upload APK as Workflow Artifact
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Personal-Notebook-APK
-          path: output-apk/Personal-Notebook.apk
+          name: Aura-AI-Keyboard-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
-          if-no-files-found: error
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: output-apk/Personal-Notebook.apk
-          draft: false
-          prerelease: false
-          generate_release_notes: true
