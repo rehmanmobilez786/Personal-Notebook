@@ -1,0 +1,96 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build & Package APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Prepare Keystore & Environment Secrets
+        run: |
+          # Reconstruct debug.keystore from base64 if present
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            echo "Reconstructing debug.keystore from base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
+          # Prepare .env file for secrets plugin
+          if [ ! -f ".env" ]; then
+            if [ -f ".env.example" ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
+          fi
+
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Organize APK Files
+        id: organize_apk
+        run: |
+          mkdir -p apk-output
+          # Locate built APK and copy to output folder
+          APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" apk-output/Personal-Notebook-debug.apk
+            echo "apk_path=apk-output/Personal-Notebook-debug.apk" >> "$GITHUB_OUTPUT"
+            echo "Found APK at $APK_FILE"
+          else
+            echo "No APK found in app/build/outputs/apk/debug!"
+            exit 1
+          fi
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Personal-Notebook-debug-APK
+          path: apk-output/Personal-Notebook-debug.apk
+          retention-days: 30
+
+      - name: Create GitHub Release (on Tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk-output/Personal-Notebook-debug.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true

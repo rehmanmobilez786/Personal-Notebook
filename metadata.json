@@ -1,0 +1,6 @@
+{
+  "name": "Personal Notebook - Diary & Sheet",
+  "description": "Personal notebook with daily diary, task reminders with alarms, MS Excel spreadsheet grid with formulas & charts, biometric security, dark mode, and cloud backup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
